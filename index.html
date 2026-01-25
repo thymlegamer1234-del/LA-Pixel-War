@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pixel War - UI Bloquée</title>
+    <script src="https://www.gstatic.com/firebasejs/9.10.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.10.0/firebase-database-compat.js"></script>
+    <style>
+        /* 1. Reset total */
+        * { box-sizing: border-box; }
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background: #121212; overflow: hidden; touch-action: none; 
+        }
+
+        /* 2. LE JEU (S'adapte à l'écran) */
+        #game-viewport { 
+            width: 100vw; height: 100vh; 
+            position: absolute; top: 0; left: 0; z-index: 1; 
+        }
+        canvas { background: #fff; image-rendering: pixelated; position: absolute; transform-origin: 0 0; }
+
+        /* 3. L'INTERFACE (FIXÉE AU BORD, NE BOUGE JAMAIS) */
+        #fixed-ui {
+            position: fixed; 
+            bottom: 0; left: 0; width: 100%;
+            height: 100px;
+            background: #222;
+            border-top: 4px solid #444;
+            z-index: 999999; /* Force l'affichage au-dessus de tout */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            pointer-events: auto; /* Permet de cliquer sur la barre */
+        }
+
+        .palette { display: flex; gap: 8px; align-items: center; }
+        .btn-color { width: 32px; height: 32px; border-radius: 4px; cursor: pointer; border: 2px solid #000; }
+        .btn-color.active { border: 2px solid #fff; outline: 2px solid #000; }
+        #custom-picker { width: 40px; height: 40px; cursor: pointer; border: none; background: none; }
+        #timer-text { color: #44ff44; font-weight: bold; font-family: monospace; font-size: 18px; }
+        #timer-text.wait { color: #ff4444; }
+    </style>
+</head>
+<body>
+
+<div id="game-viewport">
+    <canvas id="war" width="1000" height="1000"></canvas>
+</div>
+
+<div id="fixed-ui">
+    <div id="timer-text">PRÊT !</div>
+    <div class="palette">
+        <div id="base-palette" style="display: flex; gap: 5px;"></div>
+        <div style="width: 2px; height: 30px; background: #555; margin: 0 5px;"></div>
+        <input type="color" id="custom-picker" value="#ff0000">
+    </div>
+</div>
+
+<script>
+    const config = { databaseURL: "https://mapixelwar-default-rtdb.europe-west1.firebasedatabase.app/" };
+    firebase.initializeApp(config);
+    const db = firebase.database().ref("pixels");
+
+    const canvas = document.getElementById('war');
+    const ctx = canvas.getContext('2d');
+    const timerDisplay = document.getElementById('timer-text');
+    const customPicker = document.getElementById('custom-picker');
+
+    let canPlace = true;
+    let selColor = "#ff0000";
+    let z = 1, x = window.innerWidth/2 - 500, y = window.innerHeight/2 - 500;
+
+    // --- ZOOM AVEC SÉCURITÉ MAX 40x ---
+    window.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        let oldZ = z;
+        if (e.deltaY < 0 && z >= 40) return; 
+        if (e.deltaY > 0 && z <= 0.1) return;
+        
+        z = e.deltaY < 0 ? z * 1.2 : z / 1.2;
+        x = e.clientX - (e.clientX - x) * (z / oldZ);
+        y = e.clientY - (e.clientY - y) * (z / oldZ);
+        canvas.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
+    }, { passive: false });
+
+    // --- DESSIN ET COOLDOWN 5s ---
+    canvas.onclick = (e) => {
+        if (!canPlace) return;
+        const rect = canvas.getBoundingClientRect();
+        const pxX = Math.floor((e.clientX - rect.left) / z);
+        const pxY = Math.floor((e.clientY - rect.top) / z);
+
+        if (pxX >= 0 && pxX < 1000 && pxY >= 0 && pxY < 1000) {
+            db.child(pxX + "_" + pxY).set(selColor);
+            canPlace = false;
+            let time = 5;
+            timerDisplay.classList.add('wait');
+            const countdown = setInterval(() => {
+                time--;
+                timerDisplay.innerText = "ATTENTE: " + time + "s";
+                if(time <= 0) {
+                    clearInterval(countdown);
+                    canPlace = true;
+                    timerDisplay.innerText = "PRÊT !";
+                    timerDisplay.classList.remove('wait');
+                }
+            }, 1000);
+        }
+    };
+
+    // --- BOUGER AVEC LE CLIC DROIT ---
+    let drag = false, lx, ly;
+    window.onmousedown = (e) => { if(e.button === 2){ drag = true; lx = e.clientX; ly = e.clientY; }};
+    window.onmousemove = (e) => { if(drag){ x += e.clientX - lx; y += e.clientY - ly; lx = e.clientX; ly = e.clientY; canvas.style.transform = `translate(${x}px, ${y}px) scale(${z})`; }};
+    window.onmouseup = () => drag = false;
+    window.oncontextmenu = (e) => e.preventDefault();
+
+    // --- COULEURS DE BASE ---
+    const colors = ["#000000", "#FFFFFF", "#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FFA500", "#800080"];
+    const baseDiv = document.getElementById('base-palette');
+    colors.forEach(c => {
+        const b = document.createElement('div');
+        b.className = 'btn-color';
+        b.style.background = c;
+        b.onclick = () => {
+            selColor = c;
+            customPicker.value = c;
+            document.querySelectorAll('.btn-color').forEach(btn => btn.classList.remove('active'));
+            b.classList.add('active');
+        };
+        baseDiv.appendChild(b);
+    });
+
+    customPicker.oninput = (e) => {
+        selColor = e.target.value;
+        document.querySelectorAll('.btn-color').forEach(btn => btn.classList.remove('active'));
+    };
+
+    // --- FIREBASE SYNC ---
+    db.on("child_added", s => { const p = s.key.split("_"); ctx.fillStyle = s.val(); ctx.fillRect(p[0], p[1], 1, 1); });
+    db.on("child_changed", s => { const p = s.key.split("_"); ctx.fillStyle = s.val(); ctx.fillRect(p[0], p[1], 1, 1); });
+
+    // Position initiale
+    canvas.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
+</script>
+</body>
+</html>
